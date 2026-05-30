@@ -9,6 +9,9 @@ const DominioAgent = require('./agents/dominioAgent');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// ✅ OBRIGATÓRIO no Railway — está atrás de proxy reverso
+app.set('trust proxy', 1);
+
 // Health check para Railway (precisa vir antes de tudo)
 app.get('/health', (req, res) => res.json({ status: 'ok', service: 'delfiaapp-backend' }));
 
@@ -53,6 +56,7 @@ const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 500,
   message: { erro: 'Muitas requisições. Tente novamente em 15 minutos.' },
+  validate: { xForwardedForHeader: false }, // Railway usa X-Forwarded-For
 });
 app.use('/api/', limiter);
 
@@ -185,11 +189,16 @@ app.listen(PORT, async () => {
   console.log(`📡 Health: http://localhost:${PORT}/api/health`);
   console.log(`🌍 Ambiente: ${process.env.NODE_ENV || 'development'}\n`);
 
-  // Iniciar agente de monitoramento de domínios
+  // Iniciar agente de monitoramento de domínios (só se banco estiver ok)
   try {
+    const { Pool } = require('pg');
+    const testPool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false });
+    await testPool.query('SELECT 1');
+    await testPool.end();
     DominioAgent.iniciarMonitoramento();
+    console.log('✅ Monitoramento de domínios ativado');
   } catch (err) {
-    console.log('ℹ️  Monitoramento de domínios: node-cron não disponível em desenvolvimento');
+    console.log('⚠️  Monitoramento de domínios pausado (banco indisponível):', err.message);
   }
 });
 
