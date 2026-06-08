@@ -36,11 +36,7 @@ app.post('/api/webhook/stripe',
 // MIDDLEWARES
 // ============================================================
 app.use(cors({
-  origin: [
-    process.env.FRONTEND_URL || 'http://localhost:3000',
-    'https://app.delfiaapp.com.br',
-    'https://delfiaapp.com.br',
-    'https://delfiaapp.vercel.app',
+origin: true,
     'http://localhost:5500',
     'http://127.0.0.1:5500',
     'https://delfia-frontend.vercel.app',
