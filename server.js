@@ -168,6 +168,52 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
+// ============================================================
+// PROXY DE IMAGEM — para geração de fotos de produto
+// ============================================================
+const https = require('https');
+const http = require('http');
+
+app.get('/api/imagem', async (req, res) => {
+  const q = req.query.q || 'food';
+  const seed = req.query.seed || Math.floor(Math.random()*99999);
+  
+  // Monta URL do Unsplash
+  const url = `https://source.unsplash.com/512x512/?${encodeURIComponent(q)}&sig=${seed}`;
+  
+  try {
+    // Faz o proxy da imagem
+    const proxyReq = https.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'image/*',
+      }
+    }, (proxyRes) => {
+      // Seguir redirect (Unsplash faz redirect para CDN)
+      if (proxyRes.statusCode === 301 || proxyRes.statusCode === 302 || proxyRes.statusCode === 303) {
+        const redirectUrl = proxyRes.headers.location;
+        const protocol = redirectUrl.startsWith('https') ? https : http;
+        protocol.get(redirectUrl, {
+          headers: { 'User-Agent': 'Mozilla/5.0' }
+        }, (finalRes) => {
+          res.setHeader('Content-Type', finalRes.headers['content-type'] || 'image/jpeg');
+          res.setHeader('Cache-Control', 'public, max-age=86400');
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          finalRes.pipe(res);
+        }).on('error', () => res.status(500).json({ erro: 'Erro ao buscar imagem' }));
+        return;
+      }
+      res.setHeader('Content-Type', proxyRes.headers['content-type'] || 'image/jpeg');
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      proxyRes.pipe(res);
+    });
+    proxyReq.on('error', () => res.status(500).json({ erro: 'Erro ao buscar imagem' }));
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
+});
+
 // 404
 app.use('/api/*', (req, res) => {
   res.status(404).json({ erro: `Rota não encontrada: ${req.method} ${req.path}` });
