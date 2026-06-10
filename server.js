@@ -168,6 +168,13 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
+// Rota segura para retornar token HF ao frontend autenticado
+app.get('/api/hf-token', auth, (req, res) => {
+  const token = process.env.HF_TOKEN;
+  if(!token) return res.status(500).json({ erro: 'Token não configurado' });
+  res.json({ token });
+});
+
 // ============================================================
 // GERAÇÃO DE IMAGEM COM IA (Hugging Face)
 // ============================================================
