@@ -169,6 +169,60 @@ app.get('/api/health', async (req, res) => {
 });
 
 // ============================================================
+// GERAÇÃO DE IMAGEM COM IA (Hugging Face)
+// ============================================================
+app.post('/api/gerar-imagem', auth, async (req, res) => {
+  const { prompt } = req.body;
+  if(!prompt) return res.status(400).json({ erro: 'Prompt obrigatório' });
+
+  const HF_TOKEN = process.env.HF_TOKEN;
+  if(!HF_TOKEN) return res.status(500).json({ erro: 'Token HF não configurado' });
+
+  const models = [
+    'black-forest-labs/FLUX.1-schnell',
+    'stabilityai/stable-diffusion-xl-base-1.0',
+    'runwayml/stable-diffusion-v1-5',
+  ];
+
+  const promptFinal = `${prompt}, professional food photography, high quality, detailed`;
+
+  for(const model of models){
+    try{
+      const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args));
+      const hfResp = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${HF_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          inputs: promptFinal,
+          parameters: model.includes('FLUX') ? { num_inference_steps: 4, guidance_scale: 0 } : {}
+        }),
+        timeout: 60000,
+      });
+
+      if(hfResp.ok){
+        const buffer = await hfResp.buffer();
+        const contentType = hfResp.headers.get('content-type') || 'image/jpeg';
+        res.setHeader('Content-Type', contentType);
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Cache-Control', 'no-store');
+        return res.send(buffer);
+      }
+
+      // 503 = modelo carregando, tenta próximo
+      if(hfResp.status !== 503) break;
+
+    }catch(err){
+      console.error(`Erro modelo ${model}:`, err.message);
+    }
+  }
+
+  res.status(503).json({ erro: 'Serviço temporariamente indisponível. Tente novamente.' });
+});
+
+// ============================================================
 // PROXY DE IMAGEM — para geração de fotos de produto
 // ============================================================
 const https = require('https');
