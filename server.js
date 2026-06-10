@@ -178,48 +178,87 @@ app.post('/api/gerar-imagem', auth, async (req, res) => {
   const HF_TOKEN = process.env.HF_TOKEN;
   if(!HF_TOKEN) return res.status(500).json({ erro: 'Token HF não configurado' });
 
+  const https = require('https');
+  const promptFinal = `${prompt}, professional food photography, high quality, detailed, clean background`;
+
+  // Função para chamar HF com retry
+  async function chamarHF(model, tentativa=1){
+    return new Promise((resolve, reject) => {
+      const body = JSON.stringify({
+        inputs: promptFinal,
+        parameters: model.includes('FLUX') ? { num_inference_steps: 4, guidance_scale: 0 } : {}
+      });
+
+      const options = {
+        hostname: 'api-inference.huggingface.co',
+        path: `/models/${model}`,
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${HF_TOKEN}`,
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+        },
+        timeout: 90000,
+      };
+
+      const reqHF = https.request(options, (respHF) => {
+        const chunks = [];
+        respHF.on('data', c => chunks.push(c));
+        respHF.on('end', () => {
+          const buf = Buffer.concat(chunks);
+          resolve({ status: respHF.statusCode, headers: respHF.headers, buffer: buf });
+        });
+      });
+
+      reqHF.on('error', reject);
+      reqHF.on('timeout', () => { reqHF.destroy(); reject(new Error('timeout')); });
+      reqHF.write(body);
+      reqHF.end();
+    });
+  }
+
   const models = [
     'black-forest-labs/FLUX.1-schnell',
     'stabilityai/stable-diffusion-xl-base-1.0',
     'runwayml/stable-diffusion-v1-5',
   ];
 
-  const promptFinal = `${prompt}, professional food photography, high quality, detailed`;
-
   for(const model of models){
     try{
-      const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args));
-      const hfResp = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${HF_TOKEN}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          inputs: promptFinal,
-          parameters: model.includes('FLUX') ? { num_inference_steps: 4, guidance_scale: 0 } : {}
-        }),
-        timeout: 60000,
-      });
+      console.log(`Tentando modelo: ${model}`);
+      const r = await chamarHF(model);
 
-      if(hfResp.ok){
-        const buffer = await hfResp.buffer();
-        const contentType = hfResp.headers.get('content-type') || 'image/jpeg';
-        res.setHeader('Content-Type', contentType);
+      if(r.status === 200){
+        const ct = r.headers['content-type'] || 'image/jpeg';
+        res.setHeader('Content-Type', ct);
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Cache-Control', 'no-store');
-        return res.send(buffer);
+        console.log(`✅ Imagem gerada com ${model}`);
+        return res.send(r.buffer);
       }
 
-      // 503 = modelo carregando, tenta próximo
-      if(hfResp.status !== 503) break;
+      // 503 = modelo carregando — aguarda e tenta de novo
+      if(r.status === 503){
+        console.log(`Modelo ${model} carregando (503), aguardando 10s...`);
+        await new Promise(ok => setTimeout(ok, 10000));
+        const r2 = await chamarHF(model);
+        if(r2.status === 200){
+          const ct = r2.headers['content-type'] || 'image/jpeg';
+          res.setHeader('Content-Type', ct);
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Cache-Control', 'no-store');
+          console.log(`✅ Imagem gerada com ${model} (2ª tentativa)`);
+          return res.send(r2.buffer);
+        }
+      }
 
+      console.log(`Modelo ${model} falhou com status ${r.status}`);
     }catch(err){
       console.error(`Erro modelo ${model}:`, err.message);
     }
   }
 
-  res.status(503).json({ erro: 'Serviço temporariamente indisponível. Tente novamente.' });
+  res.status(503).json({ erro: 'Não foi possível gerar a imagem agora. Tente novamente em alguns segundos.' });
 });
 
 // ============================================================
