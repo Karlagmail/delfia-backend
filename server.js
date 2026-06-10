@@ -176,6 +176,73 @@ app.get('/api/hf-token', auth, (req, res) => {
 });
 
 // ============================================================
+// BIBLIOTECA DE IMAGENS — compartilhada por empresa
+// ============================================================
+
+// Criar tabela se não existir (roda na inicialização)
+async function criarTabelaBiblioteca(){
+  try{
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS biblioteca_imagens (
+        id SERIAL PRIMARY KEY,
+        empresa_id INTEGER NOT NULL,
+        url TEXT NOT NULL,
+        produto_nome VARCHAR(255),
+        criado_em TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    console.log('✅ Tabela biblioteca_imagens pronta');
+  }catch(err){
+    console.error('Erro ao criar tabela biblioteca:', err.message);
+  }
+}
+criarTabelaBiblioteca();
+
+// Listar imagens da biblioteca da empresa
+app.get('/api/biblioteca', auth, async (req, res) => {
+  try{
+    const empresaId = getEmpresaId(req);
+    const r = await pool.query(
+      'SELECT * FROM biblioteca_imagens WHERE empresa_id = $1 ORDER BY criado_em DESC LIMIT 200',
+      [empresaId]
+    );
+    res.json(r.rows);
+  }catch(err){ res.status(500).json({ erro: 'Erro interno' }); }
+});
+
+// Adicionar imagem à biblioteca
+app.post('/api/biblioteca', auth, async (req, res) => {
+  try{
+    const empresaId = getEmpresaId(req);
+    const { url, produto_nome } = req.body;
+    if(!url) return res.status(400).json({ erro: 'URL obrigatória' });
+    // Evitar duplicata
+    const existe = await pool.query(
+      'SELECT id FROM biblioteca_imagens WHERE empresa_id = $1 AND url = $2',
+      [empresaId, url]
+    );
+    if(existe.rows.length > 0) return res.json({ ok: true, duplicata: true });
+    const r = await pool.query(
+      'INSERT INTO biblioteca_imagens (empresa_id, url, produto_nome) VALUES ($1, $2, $3) RETURNING *',
+      [empresaId, url, produto_nome || null]
+    );
+    res.status(201).json(r.rows[0]);
+  }catch(err){ res.status(500).json({ erro: 'Erro interno' }); }
+});
+
+// Remover imagem da biblioteca
+app.delete('/api/biblioteca/:id', auth, async (req, res) => {
+  try{
+    const empresaId = getEmpresaId(req);
+    await pool.query(
+      'DELETE FROM biblioteca_imagens WHERE id = $1 AND empresa_id = $2',
+      [req.params.id, empresaId]
+    );
+    res.json({ ok: true });
+  }catch(err){ res.status(500).json({ erro: 'Erro interno' }); }
+});
+
+// ============================================================
 // GERAÇÃO DE IMAGEM COM IA (Hugging Face)
 // ============================================================
 app.post('/api/gerar-imagem', auth, async (req, res) => {
